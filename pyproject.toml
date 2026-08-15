@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "domofon-letai-api"
+version = "0.1.0"
+description = "Async Python client for the unofficial Domofon Letai intercom API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+    { name = "prtolem" },
+]
+keywords = ["tattelecom", "intercom", "domofon", "asyncio", "mpegts", "hls"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx[http2]>=0.27,<1",
+]
+
+[project.optional-dependencies]
+test = [
+    "build>=1.2",
+    "mypy>=1.10",
+    "pytest>=8",
+    "ruff>=0.6",
+    "twine>=5",
+]
+
+[project.urls]
+Repository = "https://github.com/prtolem/python-domofon-letai"
+Issues = "https://github.com/prtolem/python-domofon-letai/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/domofon_letai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/domofon_letai"]
