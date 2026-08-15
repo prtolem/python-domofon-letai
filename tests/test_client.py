@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import httpx
 import pytest
+
 from domofon_letai import (
     ApiError,
     AuthenticationError,

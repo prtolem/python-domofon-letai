@@ -66,3 +66,15 @@ class StreamNotAvailableError(StreamError):
 
 class StreamAuthenticationError(StreamError):
     """The media server rejected both anonymous and authenticated access."""
+
+
+class PushError(DomofonLetaiError):
+    """Incoming-call notification support failed."""
+
+
+class PushDependencyError(PushError, ImportError):
+    """The optional push dependency is not installed."""
+
+
+class CredentialStoreError(PushError):
+    """Push credentials could not be loaded or stored safely."""

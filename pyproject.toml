@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "domofon-letai-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async Python client for the unofficial Domofon Letai intercom API"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+calls = [
+    "firebase-messaging>=0.4.5,<0.5",
+]
 test = [
     "build>=1.2",
     "mypy>=1.10",

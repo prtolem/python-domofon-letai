@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -32,8 +33,11 @@ from .exceptions import (
     TransportError,
     ValidationError,
 )
-from .models import Building, Intercom, StreamFormat, StreamSource
+from .models import Building, Intercom, SipSettings, StreamFormat, StreamSource
 from .streaming import MediaStream
+
+if TYPE_CHECKING:
+    from .push import FcmCredentialStore, IncomingCallListener
 
 _PHONE_MIN = 70_000_000_000
 _PHONE_MAX = 79_999_999_999
@@ -91,7 +95,12 @@ class DomofonLetaiClient:
         self._access_token = access_token
         self._device_code = device_code
         self._closed = False
+        self._closing = False
+        self._close_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[None] | None = None
+        self._operation_lock = asyncio.Lock()
         self._intercoms: dict[int, Intercom] = {}
+        self._incoming_call_listeners: set[IncomingCallListener] = set()
 
         self._owns_api_client = api_client is None
         self._owns_media_client = media_client is None
@@ -145,16 +154,45 @@ class DomofonLetaiClient:
         await self.aclose()
 
     async def aclose(self) -> None:
-        """Close HTTP clients owned by this instance."""
+        """Close active listeners and HTTP clients owned by this instance."""
 
-        if self._closed:
-            return
+        async with self._close_lock:
+            if self._close_task is None:
+                if self._closed:
+                    return
+                self._closing = True
+                self._close_task = asyncio.create_task(self._perform_close())
+            close_task = self._close_task
 
-        self._closed = True
-        if self._owns_api_client:
-            await self._api_client.aclose()
-        if self._owns_media_client:
-            await self._media_client.aclose()
+        await asyncio.shield(close_task)
+
+    async def _perform_close(self) -> None:
+        close_errors: list[BaseException] = []
+        listeners = tuple(self._incoming_call_listeners)
+        for listener in listeners:
+            try:
+                await listener.aclose()
+            except Exception as error:
+                close_errors.append(error)
+
+        async with self._operation_lock:
+            clients = []
+            if self._owns_api_client:
+                clients.append(self._api_client)
+            if self._owns_media_client:
+                clients.append(self._media_client)
+
+            results = await asyncio.gather(
+                *(client.aclose() for client in clients),
+                return_exceptions=True,
+            )
+            close_errors.extend(
+                result for result in results if isinstance(result, BaseException)
+            )
+            self._closed = True
+
+        if close_errors:
+            raise close_errors[0]
 
     async def request_sms_code(self) -> None:
         """Ask Tattelecom to send an SMS authentication code.
@@ -234,6 +272,49 @@ class DomofonLetaiClient:
             body={"gate_id": intercom_id, "data": {"screen_id": screen_id}},
         )
 
+    async def get_sip_settings(self) -> SipSettings:
+        """Return SIP account metadata for advanced external integrations."""
+
+        data = await self._request_json(
+            "subscriber/sipsettings",
+            params={"device_code": self._device_code, "phone": self._phone},
+        )
+
+        required = ("sip_address", "sip_port", "sip_login", "sip_password")
+        if any(data.get(field) in (None, "") for field in required):
+            raise ProtocolError("SIP settings response is missing required fields")
+
+        try:
+            port = int(data["sip_port"])
+        except (TypeError, ValueError) as error:
+            raise ProtocolError("SIP settings response has an invalid port") from error
+
+        registration_expires = self._integer_or_none(data.get("reg_expire_time"))
+        return SipSettings(
+            address=str(data["sip_address"]),
+            port=port,
+            login=str(data["sip_login"]),
+            password=str(data["sip_password"]),
+            registration_expires=registration_expires,
+        )
+
+    def incoming_calls(
+        self,
+        *,
+        credential_store: FcmCredentialStore,
+        max_pending_events: int = 32,
+    ) -> IncomingCallListener:
+        """Create an async listener for incoming-call push announcements."""
+
+        self._ensure_open()
+        from .push import IncomingCallListener
+
+        return IncomingCallListener(
+            self,
+            credential_store,
+            max_pending_events=max_pending_events,
+        )
+
     async def get_stream_source(
         self,
         intercom_id: int,
@@ -278,6 +359,29 @@ class DomofonLetaiClient:
         finally:
             await response.aclose()
 
+    async def _register_fcm_token(self, token: str) -> None:
+        await self._request_json(
+            "subscriber/update-push-token",
+            method="POST",
+            version="v2",
+            body={"push_service": "fcm", "push_token": token},
+            _allow_closing=True,
+        )
+
+    def _register_incoming_call_listener(
+        self,
+        listener: IncomingCallListener,
+    ) -> None:
+        if self._closed or self._closing:
+            raise RuntimeError("DomofonLetaiClient is closing or closed")
+        self._incoming_call_listeners.add(listener)
+
+    def _discard_incoming_call_listener(
+        self,
+        listener: IncomingCallListener,
+    ) -> None:
+        self._incoming_call_listeners.discard(listener)
+
     async def _request_json(
         self,
         path: str,
@@ -287,8 +391,9 @@ class DomofonLetaiClient:
         body: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
         authenticated: bool = True,
+        _allow_closing: bool = False,
     ) -> dict[str, Any]:
-        self._ensure_open()
+        self._ensure_open(allow_closing=_allow_closing)
 
         headers = dict(DEFAULT_HEADERS)
         if authenticated:
@@ -296,13 +401,15 @@ class DomofonLetaiClient:
 
         url = API_URL.format(version=version, path=path.lstrip("/"))
         try:
-            response = await self._api_client.request(
-                method,
-                url,
-                json=body,
-                params=params,
-                headers=headers,
-            )
+            async with self._operation_lock:
+                self._ensure_open(allow_closing=_allow_closing)
+                response = await self._api_client.request(
+                    method,
+                    url,
+                    json=body,
+                    params=params,
+                    headers=headers,
+                )
         except httpx.HTTPError as error:
             message = f"API request failed: {type(error).__name__}"
             raise TransportError(message) from error
@@ -378,8 +485,12 @@ class DomofonLetaiClient:
 
         for index, headers in enumerate(attempts):
             try:
-                request = self._media_client.build_request("GET", url, headers=headers)
-                response = await self._media_client.send(request, stream=True)
+                async with self._operation_lock:
+                    self._ensure_open()
+                    request = self._media_client.build_request(
+                        "GET", url, headers=headers
+                    )
+                    response = await self._media_client.send(request, stream=True)
             except httpx.HTTPError as error:
                 raise TransportError(
                     f"media request failed: {type(error).__name__}"
@@ -494,9 +605,9 @@ class DomofonLetaiClient:
             raise AuthenticationError("an access token is required")
         return self._access_token
 
-    def _ensure_open(self) -> None:
-        if self._closed:
-            raise RuntimeError("DomofonLetaiClient is closed")
+    def _ensure_open(self, *, allow_closing: bool = False) -> None:
+        if self._closed or (self._closing and not allow_closing):
+            raise RuntimeError("DomofonLetaiClient is closing or closed")
 
     @staticmethod
     def _integer_or_none(value: Any) -> int | None:

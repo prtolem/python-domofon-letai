@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -58,3 +59,29 @@ class Intercom:
         """Return the first building address, or an empty string."""
 
         return self.addresses[0] if self.addresses else ""
+
+
+@dataclass(frozen=True, slots=True)
+class SipSettings:
+    """SIP account details returned for the current subscriber."""
+
+    address: str
+    port: int
+    login: str
+    password: str = field(repr=False)
+    registration_expires: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IncomingCallEvent:
+    """An incoming call announced by the operator's push channel."""
+
+    received_at: datetime
+    message_id: str
+    call_id: str | None
+    notification_uuid: str | None
+    sip_login: str | None
+    sip_address: str | None
+    sip_port: int | None
+    sip_transport: str | None
+    raw_data: Mapping[str, Any] = field(repr=False, compare=False)

@@ -1,7 +1,8 @@
 # domofon-letai-api
 
 Неофициальный асинхронный Python-клиент для API «Домофон Летай» Таттелекома.
-Подходит для ботов, веб-сервисов, автоматизации и обработки видео с домофона.
+Подходит для ботов, веб-сервисов, автоматизации, обработки видео и реакции на
+входящие звонки домофона.
 
 > Проект не связан с ПАО «Таттелеком». API не документирован производителем и может
 > измениться без предупреждения.
@@ -12,6 +13,8 @@
 - повторное использование сохранённого `access_token`;
 - получение списка домофонов и адресов;
 - открытие двери;
+- получение событий входящего звонка через async iterator;
+- получение SIP account metadata для внешних SIP-клиентов;
 - получение свежих HLS и MPEG-TS URL;
 - неблокирующее чтение MPEG-TS без накопления потока в памяти;
 - типизированные модели и структурированные исключения;
@@ -29,7 +32,7 @@
 
 ```bash
 python -m pip install \
-  "domofon-letai-api @ git+https://github.com/prtolem/python-domofon-letai.git@v0.1.0"
+  "domofon-letai-api @ git+https://github.com/prtolem/python-domofon-letai.git@v0.2.0"
 ```
 
 Для разработки из локальной копии:
@@ -37,7 +40,14 @@ python -m pip install \
 ```bash
 git clone https://github.com/prtolem/python-domofon-letai.git
 cd python-domofon-letai
-python -m pip install -e ".[test]"
+python -m pip install -e ".[test,calls]"
+```
+
+Для входящих звонков установите optional extra:
+
+```bash
+python -m pip install \
+  "domofon-letai-api[calls] @ git+https://github.com/prtolem/python-domofon-letai.git@v0.2.0"
 ```
 
 Рекомендуется устанавливать конкретный tag или commit, а не плавающую ветку `main`.
@@ -91,6 +101,52 @@ asyncio.run(main())
 
 Успешный ответ API означает, что команда открытия принята, а не подтверждает физическое
 состояние двери.
+
+## Входящие звонки
+
+```python
+import asyncio
+import os
+from pathlib import Path
+
+from domofon_letai import DomofonLetaiClient, FileFcmCredentialStore
+
+
+async def main() -> None:
+    store = FileFcmCredentialStore(
+        Path.home() / ".local/state/domofon-letai/fcm.json"
+    )
+
+    async with DomofonLetaiClient(
+        os.environ["DOMOFON_LETAI_PHONE"],
+        access_token=os.environ["DOMOFON_LETAI_TOKEN"],
+    ) as client:
+        intercoms = await client.list_intercoms()
+        by_login = {
+            intercom.sip_login: intercom
+            for intercom in intercoms
+            if intercom.sip_login
+        }
+
+        async with client.incoming_calls(credential_store=store) as calls:
+            async for event in calls:
+                intercom = by_login.get(event.sip_login)
+                print("Звонок:", intercom.name if intercom else event.sip_login)
+
+                # Здесь можно запустить распознавание лица, получить свежий кадр,
+                # отправить уведомление или после своей проверки открыть дверь.
+
+
+asyncio.run(main())
+```
+
+Credentials FCM обязательно сохраняются между запусками. Встроенное файловое хранилище
+использует атомарную запись и права `0600`, но не шифрует файл. Push подтверждает начало
+звонка, но не сообщает его достоверное окончание и не содержит полного SIP INVITE.
+
+Подробности, модель события, безопасность и собственное хранилище:
+[`docs/incoming-calls.md`](docs/incoming-calls.md). Полный список API:
+[`docs/api.md`](docs/api.md).
 
 ## Видео
 
@@ -162,20 +218,24 @@ token = await client.confirm_sms_code(code)
 intercoms = await client.list_intercoms()
 intercom = await client.get_intercom(intercom_id)
 await client.open_door(intercom_id)
+sip = await client.get_sip_settings()
+async with client.incoming_calls(credential_store=store) as calls: ...
 source = await client.get_stream_source(intercom_id)
 async with client.open_stream(intercom_id) as stream: ...
 await client.aclose()
 ```
 
-Основные модели: `Intercom`, `Building`, `StreamSource`, `StreamFormat`, `MediaStream`.
-Все библиотечные ошибки наследуются от `DomofonLetaiError`.
+Основные модели: `Intercom`, `Building`, `StreamSource`, `StreamFormat`, `MediaStream`,
+`IncomingCallEvent` и `SipSettings`. Все библиотечные ошибки наследуются от
+`DomofonLetaiError`.
 
 ## Известные ограничения
 
 - API неофициальный и не имеет гарантии обратной совместимости.
 - Refresh-token flow неизвестен; после `AuthenticationError` нужен новый явный вход по
   SMS.
-- Библиотека не реализует SIP/VoIP, push-уведомления и декодирование видео.
+- Поддерживаются уведомления о начале входящего звонка; управление SIP-диалогом,
+  аудио/RTP и подтверждённое событие окончания звонка пока не реализованы.
 - Задержку, уже добавленную камерой или медиасервером оператора, клиент устранить не
   может.
 - Запрос открытия двери намеренно не повторяется автоматически.
@@ -183,7 +243,7 @@ await client.aclose()
 ## Разработка
 
 ```bash
-python -m pip install -e ".[test]"
+python -m pip install -e ".[test,calls]"
 ruff check .
 mypy
 pytest -q
