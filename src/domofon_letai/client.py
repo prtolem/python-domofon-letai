@@ -33,10 +33,18 @@ from .exceptions import (
     TransportError,
     ValidationError,
 )
-from .models import Building, Intercom, SipSettings, StreamFormat, StreamSource
+from .models import (
+    Building,
+    IncomingCallEvent,
+    Intercom,
+    SipSettings,
+    StreamFormat,
+    StreamSource,
+)
 from .streaming import MediaStream
 
 if TYPE_CHECKING:
+    from .calls import SipIncomingCall
     from .push import FcmCredentialStore, IncomingCallListener
 
 _PHONE_MIN = 70_000_000_000
@@ -99,8 +107,10 @@ class DomofonLetaiClient:
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
         self._operation_lock = asyncio.Lock()
+        self._sip_connect_lock = asyncio.Lock()
         self._intercoms: dict[int, Intercom] = {}
         self._incoming_call_listeners: set[IncomingCallListener] = set()
+        self._sip_calls: set[SipIncomingCall] = set()
 
         self._owns_api_client = api_client is None
         self._owns_media_client = media_client is None
@@ -168,6 +178,14 @@ class DomofonLetaiClient:
 
     async def _perform_close(self) -> None:
         close_errors: list[BaseException] = []
+        async with self._sip_connect_lock:
+            calls = tuple(self._sip_calls)
+            for call in calls:
+                try:
+                    await call.aclose()
+                except Exception as error:
+                    close_errors.append(error)
+
         listeners = tuple(self._incoming_call_listeners)
         for listener in listeners:
             try:
@@ -315,6 +333,48 @@ class DomofonLetaiClient:
             max_pending_events=max_pending_events,
         )
 
+    async def connect_incoming_call(
+        self,
+        event: IncomingCallEvent,
+        *,
+        ssl_context: ssl.SSLContext | None = None,
+        connect_timeout: float = 10.0,
+        invite_timeout: float = 15.0,
+        transaction_timeout: float = 32.0,
+        t1: float = 0.5,
+        strict_endpoint: bool = True,
+        strict_correlation: bool = True,
+    ) -> SipIncomingCall:
+        """Connect to the SIP/TLS call announced by a push event.
+
+        This experimental API controls signaling only and does not provide RTP audio.
+        """
+
+        self._ensure_open()
+        settings = await self.get_sip_settings()
+        async with self._sip_connect_lock:
+            self._ensure_open()
+            from .calls import connect_sip_call
+
+            call = await connect_sip_call(
+                self,
+                event,
+                settings,
+                ssl_context=ssl_context,
+                connect_timeout=connect_timeout,
+                invite_timeout=invite_timeout,
+                transaction_timeout=transaction_timeout,
+                t1=t1,
+                strict_endpoint=strict_endpoint,
+                strict_correlation=strict_correlation,
+            )
+            try:
+                self._ensure_open()
+            except RuntimeError:
+                await call.aclose()
+                raise
+            return call
+
     async def get_stream_source(
         self,
         intercom_id: int,
@@ -367,6 +427,14 @@ class DomofonLetaiClient:
             body={"push_service": "fcm", "push_token": token},
             _allow_closing=True,
         )
+
+    def _register_sip_call(self, call: SipIncomingCall) -> None:
+        if self._closed or self._closing:
+            raise RuntimeError("DomofonLetaiClient is closing or closed")
+        self._sip_calls.add(call)
+
+    def _discard_sip_call(self, call: SipIncomingCall) -> None:
+        self._sip_calls.discard(call)
 
     def _register_incoming_call_listener(
         self,

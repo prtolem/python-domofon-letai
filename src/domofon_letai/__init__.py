@@ -1,5 +1,6 @@
 """Async Python client for the unofficial Domofon Letai API."""
 
+from .calls import SipCallState, SipIncomingCall
 from .client import DomofonLetaiClient, normalize_phone, normalize_sms_code
 from .exceptions import (
     ApiError,
@@ -7,11 +8,20 @@ from .exceptions import (
     CredentialStoreError,
     DomofonLetaiError,
     NotFoundError,
+    OpenDoorAndEndError,
     PermissionDeniedError,
     ProtocolError,
     PushDependencyError,
     PushError,
     RateLimitError,
+    SipAuthenticationError,
+    SipCallMismatchError,
+    SipCallStateError,
+    SipError,
+    SipMetadataError,
+    SipProtocolError,
+    SipTimeoutError,
+    SipTransportError,
     StreamAuthenticationError,
     StreamError,
     StreamNotAvailableError,
@@ -49,12 +59,23 @@ __all__ = [
     "Intercom",
     "MediaStream",
     "NotFoundError",
+    "OpenDoorAndEndError",
     "PermissionDeniedError",
     "ProtocolError",
     "PushDependencyError",
     "PushError",
     "RateLimitError",
+    "SipAuthenticationError",
+    "SipCallMismatchError",
+    "SipCallState",
+    "SipCallStateError",
+    "SipError",
+    "SipIncomingCall",
+    "SipMetadataError",
+    "SipProtocolError",
     "SipSettings",
+    "SipTimeoutError",
+    "SipTransportError",
     "StreamAuthenticationError",
     "StreamError",
     "StreamFormat",
@@ -66,4 +87,4 @@ __all__ = [
     "normalize_sms_code",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

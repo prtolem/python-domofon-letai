@@ -14,6 +14,8 @@
 - получение списка домофонов и адресов;
 - открытие двери;
 - получение событий входящего звонка через async iterator;
+- experimental SIP/TLS управление звонком: отклонить, принять без медиа, завершить;
+- открытие двери с последующим завершением SIP-вызова;
 - получение SIP account metadata для внешних SIP-клиентов;
 - получение свежих HLS и MPEG-TS URL;
 - неблокирующее чтение MPEG-TS без накопления потока в памяти;
@@ -32,7 +34,7 @@
 
 ```bash
 python -m pip install \
-  "domofon-letai-api @ git+https://github.com/prtolem/python-domofon-letai.git@v0.2.0"
+  "domofon-letai-api @ git+https://github.com/prtolem/python-domofon-letai.git@v0.3.0"
 ```
 
 Для разработки из локальной копии:
@@ -47,7 +49,7 @@ python -m pip install -e ".[test,calls]"
 
 ```bash
 python -m pip install \
-  "domofon-letai-api[calls] @ git+https://github.com/prtolem/python-domofon-letai.git@v0.2.0"
+  "domofon-letai-api[calls] @ git+https://github.com/prtolem/python-domofon-letai.git@v0.3.0"
 ```
 
 Рекомендуется устанавливать конкретный tag или commit, а не плавающую ветку `main`.
@@ -142,11 +144,26 @@ asyncio.run(main())
 
 Credentials FCM обязательно сохраняются между запусками. Встроенное файловое хранилище
 использует атомарную запись и права `0600`, но не шифрует файл. Push подтверждает начало
-звонка, но не сообщает его достоверное окончание и не содержит полного SIP INVITE.
+звонка, а `connect_incoming_call()` подключается к SIP/TLS endpoint и ожидает настоящий
+`INVITE`.
 
-Подробности, модель события, безопасность и собственное хранилище:
-[`docs/incoming-calls.md`](docs/incoming-calls.md). Полный список API:
-[`docs/api.md`](docs/api.md).
+```python
+async with client.incoming_calls(credential_store=store) as calls:
+    async for event in calls:
+        call = await client.connect_incoming_call(event)
+        async with call:
+            await call.open_door_and_end(intercom_id)
+```
+
+SIP call control пока experimental: совместимость с реальным сервером оператора требует
+полевой проверки. `answer_inactive()` принимает диалог только на уровне signaling и
+отклоняет все RTP media sections; разговора и аудио через этот метод нет.
+
+Подробности:
+
+- [push-события и FCM](docs/incoming-calls.md);
+- [experimental SIP call control](docs/sip-call-control.md);
+- [полный API reference](docs/api.md).
 
 ## Видео
 
@@ -220,6 +237,11 @@ intercom = await client.get_intercom(intercom_id)
 await client.open_door(intercom_id)
 sip = await client.get_sip_settings()
 async with client.incoming_calls(credential_store=store) as calls: ...
+call = await client.connect_incoming_call(event)
+await call.decline()
+await call.answer_inactive()
+await call.hangup()
+await call.open_door_and_end(intercom_id)
 source = await client.get_stream_source(intercom_id)
 async with client.open_stream(intercom_id) as stream: ...
 await client.aclose()
@@ -234,8 +256,10 @@ await client.aclose()
 - API неофициальный и не имеет гарантии обратной совместимости.
 - Refresh-token flow неизвестен; после `AuthenticationError` нужен новый явный вход по
   SMS.
-- Поддерживаются уведомления о начале входящего звонка; управление SIP-диалогом,
-  аудио/RTP и подтверждённое событие окончания звонка пока не реализованы.
+- SIP/TLS call control является experimental и пока не подтверждён sanitized capture-ом
+  реального сервера оператора.
+- `answer_inactive()` не реализует аудио/RTP: все предложенные media streams получают
+  port `0` и `a=inactive`.
 - Задержку, уже добавленную камерой или медиасервером оператора, клиент устранить не
   может.
 - Запрос открытия двери намеренно не повторяется автоматически.

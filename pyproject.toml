@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "domofon-letai-api"
-version = "0.2.0"
-description = "Async Python client for the unofficial Domofon Letai intercom API"
+version = "0.3.0"
+description = "Async Python API, video, push, and SIP signaling client for Domofon Letai"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

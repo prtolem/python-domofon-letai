@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Experimental push-correlated SIP-over-TLS call control.
+- Digest REGISTER and bounded zero-expiry deregistration.
+- `decline()`, signaling-only `answer_inactive()`, `hangup()`, and
+  `open_door_and_end()` operations.
+- Strict endpoint, panel login, Call-ID, dialog, and transaction correlation.
+- CANCEL, ACK, BYE, Record-Route, duplicate transaction, and Timer H/L handling.
+- Dedicated call-control guide and runnable example.
+
 ## 0.2.0
 
 - Incoming-call notifications as a typed async iterator.

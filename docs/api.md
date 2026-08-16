@@ -28,7 +28,8 @@ DomofonLetaiClient(
 | `open_stream(id, format)` | открыть неблокирующий media stream |
 | `get_sip_settings()` | получить SIP account metadata |
 | `incoming_calls(...)` | создать listener входящих звонков |
-| `aclose()` | закрыть listener-ы и принадлежащие клиенту HTTP connections |
+| `connect_incoming_call(event, ...)` | получить SIP INVITE для push-события |
+| `aclose()` | закрыть звонки, listener-ы и принадлежащие клиенту connections |
 
 Клиент рекомендуется использовать как async context manager.
 
@@ -83,6 +84,43 @@ async with listener:
 
 Состояния: `NEW`, `STARTING`, `RUNNING`, `FAILED`, `CLOSING`, `CLOSED`.
 
+## Experimental SIP call control
+
+```python
+call = await client.connect_incoming_call(
+    event,
+    ssl_context=None,
+    connect_timeout=10.0,
+    invite_timeout=15.0,
+    transaction_timeout=32.0,
+    t1=0.5,
+    strict_endpoint=True,
+    strict_correlation=True,
+)
+```
+
+`connect_incoming_call()` получает актуальные `SipSettings`, открывает проверяемое
+SIP-over-TLS соединение, выполняет Digest REGISTER и возвращает `SipIncomingCall` только
+после соответствующего `INVITE`.
+
+Методы `SipIncomingCall`:
+
+| Метод | Назначение |
+|---|---|
+| `decline()` | отправить `603 Decline` и дождаться ACK/Timer H |
+| `answer_inactive()` | отправить `200 OK` с port-zero inactive SDP и дождаться ACK |
+| `hangup()` | отправить in-dialog `BYE` и дождаться exact final response |
+| `open_door_and_end(id, screen_id=1)` | один раз открыть дверь и завершить SIP-вызов |
+| `wait_ended()` | дождаться локального или удалённого завершения |
+| `aclose()` | корректно завершить signaling, снять REGISTER и закрыть TLS |
+
+Состояния: `RINGING`, `ANSWER_SENT`, `ESTABLISHED`, `DECLINE_SENT`, `TERMINATING`,
+`ENDED`, `FAILED`, `CLOSED`. Свойства: `event`, `call_id`, `state`, `acknowledged`,
+`last_error`.
+
+`answer_inactive()` не поднимает RTP и не даёт аудио. Подробности и security overrides:
+[sip-call-control.md](sip-call-control.md).
+
 ## Исключения
 
 Все ошибки наследуются от `DomofonLetaiError`:
@@ -101,3 +139,12 @@ async with listener:
 - `PushError`
   - `PushDependencyError`
   - `CredentialStoreError`
+- `SipError`
+  - `SipMetadataError`
+  - `SipTransportError`
+  - `SipAuthenticationError`
+  - `SipProtocolError`
+    - `SipCallMismatchError`
+  - `SipCallStateError`
+  - `SipTimeoutError`
+  - `OpenDoorAndEndError`

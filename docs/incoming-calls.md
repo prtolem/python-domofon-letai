@@ -15,7 +15,7 @@ SDK может получать уведомления о входящем зв�
 
 ```bash
 python -m pip install \
-  "domofon-letai-api[calls] @ git+https://github.com/prtolem/python-domofon-letai.git@v0.2.0"
+  "domofon-letai-api[calls] @ git+https://github.com/prtolem/python-domofon-letai.git@v0.3.0"
 ```
 
 Extra `calls` устанавливает `firebase-messaging`. Основной HTTP/video API можно
@@ -132,10 +132,19 @@ Push-доставка имеет семантику at-least-once. SDK отбр�
 Событие подтверждает, что оператор объявил начало входящего звонка. Push-канал не
 сообщает подтверждённое окончание разговора и не содержит полного SIP INVITE.
 
-Поэтому в этой версии нет методов `event.answer()`, `decline()` или `hangup()`. Для них
-нужен SIP/TLS transport, регистрация, transaction/dialog state, SDP и RTP. Библиотека
-предоставляет `await client.get_sip_settings()` для интеграции со зрелым внешним
-SIP-клиентом, но не имитирует ответ на звонок только по неполному push payload.
+Сам `IncomingCallEvent` поэтому нельзя принять или отклонить. Перед управлением вызовом
+нужно подключиться к SIP/TLS endpoint, зарегистрироваться и получить соответствующий
+`INVITE`:
+
+```python
+call = await client.connect_incoming_call(event)
+async with call:
+    await call.decline()
+```
+
+Также доступны `answer_inactive()`, `hangup()` и `open_door_and_end()`. Реализация пока
+experimental и не предоставляет RTP/audio. Полное описание, модель безопасности и
+варианты настройки: [sip-call-control.md](sip-call-control.md).
 
 ## Сеть и приватность
 
@@ -150,7 +159,9 @@ credentials обрабатываются сторонней инфраструк
 - `CredentialStoreError` — credentials невозможно прочитать или сохранить;
 - `PushError` — сбой Firebase listener-а или переполнение очереди;
 - стандартные `AuthenticationError`, `RateLimitError`, `TransportError` — ошибка при
-  регистрации FCM token у оператора.
+  регистрации FCM token у оператора;
+- ошибки подключения и SIP-диалога описаны в
+  [sip-call-control.md](sip-call-control.md#ошибки).
 
 `listener.last_error` содержит последнюю фоновую ошибку, а `listener.state` — текущее
 состояние lifecycle.

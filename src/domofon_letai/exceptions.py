@@ -78,3 +78,54 @@ class PushDependencyError(PushError, ImportError):
 
 class CredentialStoreError(PushError):
     """Push credentials could not be loaded or stored safely."""
+
+
+class SipError(DomofonLetaiError):
+    """Base error for experimental SIP call signaling."""
+
+
+class SipMetadataError(SipError):
+    """A push event does not contain safe SIP connection metadata."""
+
+
+class SipTransportError(SipError):
+    """The SIP TLS connection failed."""
+
+
+class SipAuthenticationError(SipError):
+    """SIP registration credentials or a digest challenge were rejected."""
+
+
+class SipProtocolError(SipError):
+    """A malformed or unsupported SIP message was received."""
+
+
+class SipCallMismatchError(SipProtocolError):
+    """A SIP INVITE does not match the triggering push event."""
+
+
+class SipCallStateError(SipError):
+    """A call operation is invalid for the current signaling state."""
+
+
+class SipTimeoutError(SipError):
+    """A SIP operation exceeded its configured timeout."""
+
+
+class OpenDoorAndEndError(SipError):
+    """Door opening and SIP termination did not both complete successfully."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        door_request_succeeded: bool,
+        sip_end_succeeded: bool,
+        door_error: BaseException | None = None,
+        sip_error: BaseException | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.door_request_succeeded = door_request_succeeded
+        self.sip_end_succeeded = sip_end_succeeded
+        self.door_error = door_error
+        self.sip_error = sip_error
